@@ -1,0 +1,294 @@
+#!/usr/bin/python3
+# omarchy:summary=Print the Kilo Code usage record as JSON
+# omarchy:args=[--force] [--limits-only]
+# omarchy:hidden=true
+"""Collect Kilo Code usage into one display-ready JSON record.
+
+Kilo keeps every session in an embedded SQLite database, one row per message
+with the provider, model, and token counts attached. That is the whole source
+here: Kilo publishes no usage or balance endpoint, so the record carries local
+token stats and no limits. The agents panel only ever reads the JSON this
+prints.
+
+Kilo is an OpenCode fork and its database is OpenCode's, down to the message
+JSON, which is why this scan is shaped like the opencode scans in the claude
+and codex collectors. Unlike those two it filters no provider: a Kilo
+subscription is whatever ran through Kilo, on whichever model.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sqlite3
+import sys
+import tempfile
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+AGENT_ID = "kilo"
+AGENT_NAME = "Kilo Code"
+AUTH_HELP = "Run `kilo auth` to sign in, then use Kilo once to record usage."
+
+# Matches the codex collector: a short window that only dedups the concurrent
+# collector runs a panel refresh can start, and a long one for --limits-only,
+# which promises fresh limits and Kilo has none to fetch.
+SCAN_REUSE_SECONDS = 20
+LIMITS_ONLY_REUSE_SECONDS = 900
+
+
+def database_path() -> Path:
+  data_home = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+  return data_home / "kilo" / "kilo.db"
+
+
+def number(value: Any) -> int:
+  try:
+    return max(0, int(value or 0))
+  except Exception:
+    return 0
+
+
+def local_day(value: Any) -> str:
+  if value is None:
+    return datetime.now().strftime("%Y-%m-%d")
+  if isinstance(value, (int, float)):
+    # Kilo inherits OpenCode's millisecond timestamps.
+    if value > 10_000_000_000:
+      value = value / 1000
+    return datetime.fromtimestamp(value).strftime("%Y-%m-%d")
+  text = str(value)
+  try:
+    if text.endswith("Z"):
+      parsed = datetime.fromisoformat(text[:-1] + "+00:00")
+    else:
+      parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is not None:
+      parsed = parsed.astimezone()
+    return parsed.strftime("%Y-%m-%d")
+  except Exception:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def model_name(raw: Any) -> str:
+  value = str(raw or "").rstrip("/").split("/")[-1]
+  return value or "kilo"
+
+
+class Accumulator:
+  def __init__(self) -> None:
+    now = datetime.now()
+    self.today = now.strftime("%Y-%m-%d")
+    self.recent_dates = [
+      (now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)
+    ]
+    self.recent = {day: {"date": day, "messageCount": 0} for day in self.recent_dates}
+    self.today_tokens_by_model: dict[str, int] = {}
+    self.model_usage: dict[str, dict[str, int]] = {}
+    self.today_sessions: set[str] = set()
+    self.total_sessions: set[str] = set()
+    self.active_days: set[str] = set()
+    self.today_prompts = 0
+    self.today_total_tokens = 0
+    self.total_prompts = 0
+
+  def add(self, day, session_key, model, input_tokens, output_tokens, cache_read, cache_write):
+    total = input_tokens + output_tokens + cache_read + cache_write
+    self.total_prompts += 1
+    self.total_sessions.add(session_key)
+    self.active_days.add(day)
+
+    bucket = self.model_usage.setdefault(model, {
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+    })
+    bucket["inputTokens"] += input_tokens
+    bucket["outputTokens"] += output_tokens
+    bucket["cacheReadInputTokens"] += cache_read
+    bucket["cacheCreationInputTokens"] += cache_write
+
+    if day in self.recent:
+      self.recent[day]["messageCount"] += total
+
+    if day == self.today:
+      self.today_prompts += 1
+      self.today_sessions.add(session_key)
+      self.today_total_tokens += total
+      self.today_tokens_by_model[model] = self.today_tokens_by_model.get(model, 0) + total
+
+  def stats(self) -> dict[str, Any]:
+    return {
+      "todayPrompts": self.today_prompts,
+      "todaySessions": len(self.today_sessions),
+      "todayTotalTokens": self.today_total_tokens,
+      "todayTokensByModel": self.today_tokens_by_model,
+      "recentDays": [self.recent[day] for day in self.recent_dates],
+      "totalPrompts": self.total_prompts,
+      "totalSessions": len(self.total_sessions),
+      "activeDays": len(self.active_days),
+      "activeDates": sorted(self.active_days),
+      "modelUsage": self.model_usage,
+    }
+
+
+def scan_sessions() -> tuple[dict[str, Any], bool]:
+  """Walk the Kilo database. Returns the stats and whether the scan completed.
+
+  A scan cut short by a database error still contributes what it read, but
+  must not be cached as if it were the whole story.
+  """
+  acc = Accumulator()
+  db = database_path()
+  if not db.is_file():
+    return acc.stats(), True
+
+  try:
+    conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    return acc.stats(), False
+
+  try:
+    conn.execute("PRAGMA query_only = ON")
+    # The LIKE gate is pure acceleration: it skips the JSON parse of rows that
+    # cannot be assistant messages, on a database that holds every historical
+    # message body. json_valid guards the parse itself, because json_extract
+    # raises on malformed JSON instead of returning NULL, and one bad row
+    # would otherwise abort the whole scan. The Python filter below is the
+    # authority for what actually counts.
+    rows = conn.execute(
+      "SELECT session_id, data FROM message"
+      " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
+      " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END = 'assistant'"
+    )
+    for session_id, raw in rows:
+      # One malformed row must not abort the scan, so every shape assumption
+      # lives inside the try.
+      try:
+        entry = json.loads(raw)
+        if not isinstance(entry, dict) or entry.get("role") != "assistant":
+          continue
+        tokens = entry.get("tokens") or {}
+        cache = tokens.get("cache") or {}
+        input_tokens = number(tokens.get("input"))
+        # Kilo keeps thinking tokens out of output; both are generated.
+        output_tokens = number(tokens.get("output")) + number(tokens.get("reasoning"))
+        cache_read = number(cache.get("read"))
+        cache_write = number(cache.get("write"))
+        if not (input_tokens or output_tokens or cache_read or cache_write):
+          continue
+        day = local_day((entry.get("time") or {}).get("created"))
+        model = model_name(entry.get("modelID"))
+      except Exception:
+        continue
+      acc.add(day, "kilo:" + str(session_id), model, input_tokens, output_tokens, cache_read, cache_write)
+  except sqlite3.Error:
+    # Transient lock, schema migration, corruption: the numbers stop here,
+    # incomplete.
+    return acc.stats(), False
+  finally:
+    conn.close()
+
+  return acc.stats(), True
+
+
+def cache_file() -> Path:
+  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+  root.mkdir(parents=True, exist_ok=True)
+  digest = hashlib.sha1(str(database_path()).encode("utf-8")).hexdigest()[:16]
+  return root / f"kilo-{digest}.json"
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+  # A temp name unique to this writer, not derived from the target: several
+  # collectors can run at once, and a shared temp path means the second
+  # replace finds the first one's file already moved away.
+  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+  tmp = Path(tmp_name)
+  try:
+    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    tmp.chmod(0o644)
+    tmp.replace(path)
+  except Exception:
+    tmp.unlink(missing_ok=True)
+    raise
+
+
+def _cached_stats(max_age: float) -> dict[str, Any]:
+  path = cache_file()
+  if max_age > 0:
+    try:
+      cached = json.loads(path.read_text(encoding="utf-8"))
+      fresh = time.time() - path.stat().st_mtime <= max_age
+      if fresh and isinstance(cached, dict) and cached.get("schemaVersion") == 1:
+        stats = cached.get("stats")
+        # A cache written on an earlier day describes the wrong "today".
+        if isinstance(stats, dict) and cached.get("scanDate") == datetime.now().strftime("%Y-%m-%d"):
+          return stats
+    except Exception:
+      pass
+
+  stats, complete = scan_sessions()
+  if complete:
+    write_json(path, {
+      "schemaVersion": 1,
+      "scanDate": datetime.now().strftime("%Y-%m-%d"),
+      "stats": stats,
+    })
+  return stats
+
+
+def cached_stats(max_age: float) -> dict[str, Any]:
+  """Local stats, with the cache as a pure optimization.
+
+  The cache must never take the collector down: any cache-layer failure
+  degrades to a direct scan and a warning on stderr. The JSON record is the
+  contract; the cache is not.
+  """
+  try:
+    return _cached_stats(max_age)
+  except Exception as exc:
+    print(f"omarchy-agent-usage-kilo: cache unavailable ({exc}); scanning directly", file=sys.stderr)
+    stats, _ = scan_sessions()
+    return stats
+
+
+def main() -> None:
+  parser = argparse.ArgumentParser()
+  # Both flags are the panel's, not this collector's: --force rescans, and
+  # --limits-only promises fresh limits. Kilo publishes no limits, so that
+  # call may reuse a scan for far longer than a normal run.
+  parser.add_argument("--force", action="store_true")
+  parser.add_argument("--limits-only", action="store_true")
+  args = parser.parse_args()
+
+  max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
+  stats = cached_stats(max_age)
+  has_usage = bool(stats.get("totalPrompts"))
+
+  record: dict[str, Any] = {
+    "schemaVersion": 1,
+    "id": AGENT_ID,
+    "name": AGENT_NAME,
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "ready": True,
+    "hasLocalStats": has_usage,
+    # Kilo exposes no plan, allowance, or balance to read, so the panel gets
+    # stats and an empty limits list rather than an invented meter.
+    "tierLabel": "",
+    "usageStatusText": "",
+    "authHelpText": "" if has_usage else AUTH_HELP,
+    "limits": [],
+  }
+  record.update(stats)
+  print(json.dumps(record, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+  main()
