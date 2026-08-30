@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# omarchy:summary=Sync the generated Omarchy theme to Kilo Code
+# omarchy:args=[--activate]
+# omarchy:hidden=true
+
+set -euo pipefail
+
+KILO_SOURCE_PATH="$HOME/.local/state/omarchy/current/theme/kilo.json"
+KILO_CONFIG_DIR="$HOME/.config/kilo"
+KILO_THEME_PATH="$KILO_CONFIG_DIR/themes/omarchy.json"
+KILO_TUI_PATH="$KILO_CONFIG_DIR/tui.jsonc"
+KILO_ACTIVATE=0
+
+usage() {
+  echo "Usage: omarchy-theme-set-kilo [--activate]"
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --activate)
+      KILO_ACTIVATE=1
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ ! -f $KILO_SOURCE_PATH ]]; then
+  if (( KILO_ACTIVATE == 1 )); then
+    echo "Kilo Code theme source missing: $KILO_SOURCE_PATH" >&2
+    echo "Run omarchy-theme-refresh after selecting an Omarchy theme." >&2
+    exit 1
+  fi
+
+  exit 0
+fi
+
+if (( KILO_ACTIVATE == 0 )) && [[ ! -d $KILO_CONFIG_DIR ]]; then
+  exit 0
+fi
+
+write_setting_theme() {
+  local tmp
+
+  mkdir -p "$KILO_CONFIG_DIR"
+
+  # tui.jsonc is JSONC by name, but jq only reads strict JSON. An existing file
+  # with comments is left alone rather than rewritten into something the user
+  # did not write: the theme is already installed, and selecting it by hand is
+  # one /themes away.
+  if [[ -f $KILO_TUI_PATH ]]; then
+    if jq -e . "$KILO_TUI_PATH" >/dev/null 2>&1; then
+      tmp=$(mktemp "$KILO_TUI_PATH.XXXXXX")
+      jq '.theme = "omarchy"' "$KILO_TUI_PATH" >"$tmp"
+      mv "$tmp" "$KILO_TUI_PATH"
+    else
+      echo "Leaving $KILO_TUI_PATH alone: it is not plain JSON." >&2
+      echo "Select the theme in Kilo with /themes and pick omarchy." >&2
+    fi
+  else
+    cat >"$KILO_TUI_PATH" <<EOF
+{
+  "theme": "omarchy"
+}
+EOF
+  fi
+}
+
+mkdir -p "$(dirname "$KILO_THEME_PATH")"
+tmp=$(mktemp "$KILO_THEME_PATH.XXXXXX")
+cp "$KILO_SOURCE_PATH" "$tmp"
+mv "$tmp" "$KILO_THEME_PATH"
+
+if (( KILO_ACTIVATE == 1 )); then
+  write_setting_theme
+fi

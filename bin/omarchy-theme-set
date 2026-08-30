@@ -320,12 +320,14 @@ post_theme_commands=(
   omarchy-restart-hyprctl
   omarchy-restart-btop
   omarchy-restart-opencode
+  omarchy-restart-kilo
   omarchy-restart-helix
   omarchy-theme-set-foot
   omarchy-theme-set-tmux
   omarchy-theme-set-gnome
   omarchy-theme-set-pi
   omarchy-theme-set-claude
+  omarchy-theme-set-kilo
   omarchy-theme-set-browser
   omarchy-theme-set-vscode
   omarchy-theme-set-obsidian
