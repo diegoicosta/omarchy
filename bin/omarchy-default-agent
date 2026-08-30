@@ -26,7 +26,12 @@ fi
 case "$1" in
 pi) agent="pi"; name="Pi" ;;
 omp | oh-my-pi) agent="omp"; name="Oh My Pi"; agent_package="github:can1357/oh-my-pi" ;;
-opencode | open-code) agent="opencode"; name="OpenCode" ;;
+opencode | open-code)
+  agent="opencode"; name="OpenCode"
+  # Without AVX2 the stock build dies with an illegal instruction, so the
+  # package this installs has to match what install/user/mise.sh wrapped.
+  omarchy-hw-avx2 || agent_package="ubi:anomalyco/opencode[matching=baseline]"
+  ;;
 claude | claude-code) agent="claude"; name="Claude Code" ;;
 codex) agent="codex"; name="Codex" ;;
 crush) agent="crush"; name="Crush" ;;

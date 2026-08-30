@@ -8,7 +8,15 @@ omarchy-mise-install crush
 omarchy-mise-install gemini
 omarchy-mise-install gh
 omarchy-mise-install copilot
-omarchy-mise-install opencode
+# OpenCode is built with Bun, whose stock build targets x86-64-v3 and dies with
+# an illegal instruction on a CPU without AVX2. Upstream's own installer picks
+# the baseline release in that case; mise's registry entry does not, so choose
+# it here.
+if omarchy-hw-avx2; then
+  omarchy-mise-install opencode
+else
+  omarchy-mise-install "ubi:anomalyco/opencode[matching=baseline]" opencode
+fi
 omarchy-mise-install npm:playwright playwright
 omarchy-mise-install pi
 omarchy-mise-install github:can1357/oh-my-pi omp

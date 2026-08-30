@@ -4,6 +4,10 @@ Omarchy is a beautiful, modern & opinionated Linux distribution by DHH.
 
 Read more at [omarchy.org](https://omarchy.org).
 
+## This fork
+
+This is a fork carrying changes that are not upstream. See [`FORK.md`](FORK.md) for what they are, how to apply them to a running Omarchy install, and how to keep the fork current.
+
 ## The Omarchy Manual
 
 The manual lives in [`manual/`](manual/), which is its authoritative source. It's
