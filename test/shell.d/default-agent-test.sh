@@ -98,6 +98,7 @@ omp_package="github:can1357/oh-my-pi"
 crush_package="crush"
 agy_package="antigravity-cli"
 ori_package="github:OpenRouterLabs/ori-releases"
+kilo_package="npm:@kilocode/cli"
 
 assert_lazy_stub() {
   local package=$1
@@ -116,6 +117,7 @@ assert_lazy_stub "$grok_package" grok
 assert_lazy_stub "$omp_package" omp
 assert_lazy_stub "$crush_package" crush
 assert_lazy_stub "$ori_package" ori
+assert_lazy_stub "$kilo_package" kilo
 pass "custom agent lazy stubs preserve their mise packages"
 
 source "$ROOT/install/user/mise.sh"
@@ -124,6 +126,7 @@ grep -Fx "$grok_package grok" "$stub_log" >/dev/null || fail "user setup creates
 grep -Fx "$omp_package omp" "$stub_log" >/dev/null || fail "user setup creates the Oh My Pi lazy stub"
 grep -Fx "$crush_package" "$stub_log" >/dev/null || fail "user setup creates the Crush lazy stub"
 grep -Fx "$ori_package ori" "$stub_log" >/dev/null || fail "user setup creates the Ori lazy stub"
+grep -Fx "$kilo_package kilo" "$stub_log" >/dev/null || fail "user setup creates the Kilo Code lazy stub"
 pass "user setup creates the custom agent lazy stubs"
 
 : >"$stub_log"
@@ -240,9 +243,9 @@ rm "$test_home/.local/state/omarchy/preinstalls-removed"
 rm -f "$agent_file"
 pass "agent migrations install working wrappers without overriding the preinstall opt-out"
 
-touch "$test_home/.local/bin/agy" "$test_home/.local/bin/ori"
+touch "$test_home/.local/bin/agy" "$test_home/.local/bin/ori" "$test_home/.local/bin/kilo"
 omarchy-remove-preinstalls >/dev/null
-for command in agy omp ori grok crush; do
+for command in agy omp ori grok crush kilo; do
   [[ ! -e $test_home/.local/bin/$command ]] || fail "Remove Preinstalls deletes the $command lazy stub"
 done
 pass "Remove Preinstalls deletes every optional agent lazy stub"
@@ -293,6 +296,9 @@ declare -A expected_agents=(
   [oh-my-pi]="omp"
   [opencode]="opencode"
   [open-code]="opencode"
+  [kilo]="kilo"
+  [kilo-code]="kilo"
+  [kilocode]="kilo"
   [ori]="ori"
   [openrouter]="ori"
   [claude]="claude"
@@ -313,6 +319,7 @@ declare -A expected_packages=(
   [pi]="pi"
   [omp]="$omp_package"
   [opencode]="opencode"
+  [kilo]="$kilo_package"
   [ori]="$ori_package"
   [claude]="claude"
   [codex]="codex"
@@ -457,6 +464,7 @@ assert_bypass() {
 assert_launch pi pi "Review this project"
 assert_launch omp omp --auto-approve -- "Review this project"
 assert_launch opencode opencode --auto --prompt "Review this project"
+assert_launch kilo kilo --auto --prompt "Review this project"
 assert_launch ori ori code --interactive --prompt "Review this project"
 assert_launch claude claude --permission-mode auto -- "Review this project"
 assert_launch codex codex --approve-for-me -- "Review this project"
@@ -469,6 +477,7 @@ pass "agent launcher adapts initial prompts for every supported agent"
 assert_bypass pi pi
 assert_bypass omp omp --auto-approve
 assert_bypass opencode opencode --auto
+assert_bypass kilo kilo --auto
 assert_bypass ori ori code
 assert_bypass claude claude --permission-mode auto
 assert_bypass codex codex --approve-for-me

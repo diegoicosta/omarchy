@@ -58,6 +58,13 @@ opencode)
   command=(opencode --auto)
   [[ -n ${prompt:-} ]] && command+=(--prompt "$prompt")
   ;;
+kilo)
+  # Kilo is an OpenCode fork, down to the flag names: --auto is its
+  # "auto-approve permissions that are not explicitly denied", and --prompt
+  # seeds the interactive session rather than running one headless turn.
+  command=(kilo --auto)
+  [[ -n ${prompt:-} ]] && command+=(--prompt "$prompt")
+  ;;
 agy)
   command=(agy --dangerously-skip-permissions)
   [[ -n ${prompt:-} ]] && command+=(--prompt-interactive "$prompt")
