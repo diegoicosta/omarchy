@@ -70,11 +70,11 @@ grep -c avx2 /proc/cpuinfo
 ### 2. Point Omarchy at the fork
 
 ```bash
-git clone git@github.com:diegoicosta/omarchy.git ~/omarchy
-cd ~/omarchy
+git clone git@github.com:diegoicosta/omarchy.git ~/develop/omarchy
+cd ~/develop/omarchy
 git remote add upstream https://github.com/omacom/omarchy.git
 git checkout opencode-conditional
-omarchy dev link ~/omarchy
+omarchy dev link ~/develop/omarchy
 ```
 
 Reboot.
@@ -85,7 +85,7 @@ Reboot.
 echo $OMARCHY_PATH
 ```
 
-Must print `/home/<you>/omarchy`. If it prints `/usr/share/omarchy`, the reboot did not happen — reboot and check again before continuing.
+Must print the checkout path from step 2 — `/home/diego/develop/omarchy`. If it still prints `/usr/share/omarchy`, the reboot did not happen; reboot and check again before continuing.
 
 ### 4. Regenerate the OpenCode launcher
 
@@ -134,14 +134,14 @@ If the rebase stops on a conflict, edit the file, then `git add <file>` and `git
 ### On the Omarchy machine
 
 ```bash
-cd ~/omarchy
+cd ~/develop/omarchy
 git fetch
 git reset --hard origin/opencode-conditional
 ```
 
 **Do not use `git pull` here.** The branch history was rewritten by the rebase, so a pull tries to merge the old commit with the new one and leaves you with a duplicate commit or a conflict. `reset --hard` matches the rewritten branch exactly.
 
-`reset --hard` also discards anything uncommitted in `~/omarchy`. That is fine — the checkout is there to be read, not edited.
+`reset --hard` also discards anything uncommitted in the checkout. That is fine — the checkout is there to be read, not edited.
 
 No reboot is needed for a routine update. Files change in place under `$OMARCHY_PATH`, and `bin/` commands take effect on next invocation. Reboot only if an upstream change touches the session environment.
 
