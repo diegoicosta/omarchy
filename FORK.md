@@ -32,6 +32,17 @@ Upstream publishes `opencode-linux-x64-baseline` for exactly this case, and its 
 | `install/user/mise.sh` | Installs the baseline release when AVX2 is absent |
 | `bin/omarchy-default-agent` | Same condition, so _Setup > Defaults > Agent_ registers the same package the launcher stub wraps |
 
+### Why the package spec ends in `.tar`
+
+The release publishes two baseline builds for linux x64:
+
+```
+opencode-linux-x64-baseline.tar.gz        glibc — what Arch needs
+opencode-linux-x64-baseline-musl.tar.gz   musl
+```
+
+`matching=` is a substring filter, so a bare `matching=baseline` matches both and ubi may select the musl build. That binary names `/lib/ld-musl-x86_64.so.1` as its interpreter, which does not exist on Arch, and running it fails with `cannot execute: required file not found` — on a file that is plainly present. `matching=baseline.tar` selects only the glibc asset, since the musl one reads `baseline-musl.tar`.
+
 ### Why the third file matters
 
 `~/.local/bin/opencode` is a small generated wrapper with the package name baked into it, and it is what actually executes when you type `opencode` or press the agent keybinding.
@@ -40,7 +51,7 @@ Upstream publishes `opencode-linux-x64-baseline` for exactly this case, and its 
 
 ### Status
 
-The AVX2 detection and the package selection are straightforward. The specific package spec `ubi:anomalyco/opencode[matching=baseline]` has **not** been verified against a non-AVX2 machine — step 5 in Part 2 is what confirms it.
+Verified on a 2011 iMac12 (Sandy Bridge, no AVX2) running Omarchy: `opencode` reports its version and runs. Step 5 in Part 2 is the same check on any other machine.
 
 ---
 
@@ -80,7 +91,7 @@ Must print `/home/<you>/omarchy`. If it prints `/usr/share/omarchy`, the reboot 
 
 ```bash
 mise rm -g opencode
-omarchy-mise-install "ubi:anomalyco/opencode[matching=baseline]" opencode
+omarchy-mise-install "ubi:anomalyco/opencode[matching=baseline.tar]" opencode
 ```
 
 `mise rm` errors harmlessly if the entry is not registered.
@@ -157,7 +168,15 @@ That returns you to the packaged Omarchy and the stock OpenCode build.
 
 # Troubleshooting
 
-**Part 2 step 5 prints nothing.** The release asset may no longer be named `*baseline*`, which is what `matching=baseline` selects. Check the asset names on the [releases page](https://github.com/anomalyco/opencode/releases), adjust the `matching=` value, and re-run step 4.
+**Step 5 fails with `cannot execute: required file not found`.** ubi selected the musl asset. The path in the error exists — it is the ELF interpreter that is missing. Confirm the spec reads `matching=baseline.tar`, then force a clean re-download, because mise keys the install directory on backend and repo rather than on the options and will otherwise keep the musl binary:
+
+```bash
+mise rm -g "ubi:anomalyco/opencode" 2>/dev/null
+rm -rf ~/.local/share/mise/installs/ubi-anomalyco-opencode
+omarchy-mise-install "ubi:anomalyco/opencode[matching=baseline.tar]" opencode
+```
+
+**Step 5 prints nothing at all.** The release asset names may have changed. Check them on the [releases page](https://github.com/anomalyco/opencode/releases), adjust the `matching=` value so it selects exactly one linux x64 glibc baseline asset, and re-run step 4.
 
 **`opencode` works, but selecting it in the Defaults menu breaks it.** Part 2 step 3 failed — `$OMARCHY_PATH` is still the packaged path, so the unpatched `omarchy-default-agent` is running.
 

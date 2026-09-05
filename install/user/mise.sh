@@ -11,11 +11,12 @@ omarchy-mise-install copilot
 # OpenCode is built with Bun, whose stock build targets x86-64-v3 and dies with
 # an illegal instruction on a CPU without AVX2. Upstream's own installer picks
 # the baseline release in that case; mise's registry entry does not, so choose
-# it here.
+# it here. The match ends in .tar because the release carries both a glibc
+# and a musl baseline asset, and a bare 'baseline' matches the musl one.
 if omarchy-hw-avx2; then
   omarchy-mise-install opencode
 else
-  omarchy-mise-install "ubi:anomalyco/opencode[matching=baseline]" opencode
+  omarchy-mise-install "ubi:anomalyco/opencode[matching=baseline.tar]" opencode
 fi
 omarchy-mise-install npm:playwright playwright
 omarchy-mise-install pi

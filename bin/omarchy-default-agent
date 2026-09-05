@@ -30,7 +30,7 @@ opencode | open-code)
   agent="opencode"; name="OpenCode"
   # Without AVX2 the stock build dies with an illegal instruction, so the
   # package this installs has to match what install/user/mise.sh wrapped.
-  omarchy-hw-avx2 || agent_package="ubi:anomalyco/opencode[matching=baseline]"
+  omarchy-hw-avx2 || agent_package="ubi:anomalyco/opencode[matching=baseline.tar]"
   ;;
 claude | claude-code) agent="claude"; name="Claude Code" ;;
 codex) agent="codex"; name="Codex" ;;
