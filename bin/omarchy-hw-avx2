@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# omarchy:summary=Detect whether the CPU supports AVX2.
+
+grep -qw avx2 /proc/cpuinfo

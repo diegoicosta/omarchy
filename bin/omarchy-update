@@ -53,6 +53,40 @@ cleanup_update() {
   exit "$status"
 }
 
+# Fork: the checkout supplies the shell, commands, and migrations, while the
+# packages come from the stable channel. Running the update with the two on
+# different releases is what breaks it: newer code runs migrations against
+# older packages, and a newer shell runs against an older quickshell. Refuse
+# unless the checkout sits exactly on the stable release this update will
+# install, which is what `omarchy-maintenance update` arranges.
+fork_require_stable_checkout() {
+  local path=${OMARCHY_PATH:-/usr/share/omarchy}
+  [[ $path != "/usr/share/omarchy" ]] || return 0
+
+  local installed target out rc=0 base
+  installed=$(pacman -Q omarchy 2>/dev/null | awk '{print $2}' | cut -d- -f1)
+  out=$(timeout 120 checkupdates 2>/dev/null) || rc=$?
+  # checkupdates: 0 = updates available, 2 = none, anything else = it could
+  # not tell, which is not good enough to guess from.
+  if (( rc != 0 && rc != 2 )); then
+    echo -e "\e[0;31mCannot check the stable Omarchy release (checkupdates exit $rc).\e[0m" >&2
+    echo "Run 'omarchy-maintenance update' instead, which syncs the fork first." >&2
+    return 1
+  fi
+  target=$(printf '%s\n' "$out" | awk '$1 == "omarchy" { print $4; exit }' | cut -d- -f1)
+  target=${target:-$installed}
+  [[ -n $target ]] || return 0
+
+  base=$(git -C "$path" rev-parse -q --verify 'HEAD^' 2>/dev/null) || base=""
+  if [[ -z $base || $base != "$(git -C "$path" rev-parse -q --verify "refs/tags/v$target^{commit}" 2>/dev/null)" ]]; then
+    echo -e "\e[0;31mThis checkout is not on the stable release being installed (v$target).\e[0m" >&2
+    echo "  checkout: ${base:-unknown}   stable: v$target (installed ${installed:-unknown})" >&2
+    echo "Run 'omarchy-maintenance update' (or 'omarchy-maintenance sync') first," >&2
+    echo "then update again." >&2
+    return 1
+  fi
+}
+
 if [[ -z ${OMARCHY_UPDATE_LOGGED:-} ]]; then
   script_command=$(printf '%q ' "$0" "$@")
   exec env OMARCHY_UPDATE_LOGGED=1 script -qefc "$script_command" "/tmp/omarchy-update.log"
@@ -69,6 +103,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 omarchy-update-requires-free-space
+
+fork_require_stable_checkout || exit 1
 
 # -y skips the start confirmation and, unless the caller set
 # OMARCHY_UPDATE_UNATTENDED itself, suppresses Omarchy confirmation prompts;
